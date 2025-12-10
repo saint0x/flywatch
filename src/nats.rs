@@ -5,6 +5,7 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
+use crate::log_buffer::LogBuffer;
 use crate::metrics::Metrics;
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,7 @@ pub struct NatsSubscriber {
     config: Arc<Config>,
     metrics: Arc<Metrics>,
     tx: broadcast::Sender<LogMessage>,
+    log_buffer: Arc<LogBuffer>,
 }
 
 impl NatsSubscriber {
@@ -23,8 +25,14 @@ impl NatsSubscriber {
         config: Arc<Config>,
         metrics: Arc<Metrics>,
         tx: broadcast::Sender<LogMessage>,
+        log_buffer: Arc<LogBuffer>,
     ) -> Self {
-        Self { config, metrics, tx }
+        Self {
+            config,
+            metrics,
+            tx,
+            log_buffer,
+        }
     }
 
     pub async fn connect(&self) -> Result<Client, async_nats::ConnectError> {
@@ -89,8 +97,12 @@ impl NatsSubscriber {
 
         while let Some(message) = subscriber.next().await {
             let raw = String::from_utf8_lossy(&message.payload).to_string();
-            let log_msg = LogMessage { raw };
 
+            // Push to log buffer for AI access
+            self.log_buffer.push(raw.clone()).await;
+
+            // Broadcast to SSE/WebSocket clients
+            let log_msg = LogMessage { raw };
             self.metrics.increment_messages_forwarded();
             let _ = self.tx.send(log_msg);
         }

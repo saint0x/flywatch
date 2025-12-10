@@ -8,7 +8,7 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse, Response,
     },
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures::{SinkExt, StreamExt};
@@ -21,9 +21,12 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
+use crate::chat::chat_handler;
 use crate::config::Config;
+use crate::log_buffer::{LogBuffer, LogSummary};
 use crate::metrics::{HealthStatus, Metrics, MetricsSnapshot};
 use crate::nats::LogMessage;
+use crate::usage::{UsageStats, UsageTracker};
 
 const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 const WS_PONG_TIMEOUT: Duration = Duration::from_secs(10);
@@ -34,6 +37,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub metrics: Arc<Metrics>,
     pub log_tx: broadcast::Sender<LogMessage>,
+    pub log_buffer: Arc<LogBuffer>,
+    pub usage_tracker: Arc<UsageTracker>,
     pub start_time: Instant,
 }
 
@@ -51,12 +56,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/logs/stream", get(sse_handler))
         .route("/logs/ws", get(ws_handler))
         .route("/metrics/ws", get(metrics_ws_handler))
+        .route("/chat", post(chat_handler))
+        .route("/logs/buffer/stats", get(logs_stats_handler))
+        .route("/usage", get(usage_handler))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
-fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+pub fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     if let Some(expected_token) = &state.config.auth_token {
         let auth_header = headers
             .get(header::AUTHORIZATION)
@@ -95,6 +103,14 @@ async fn ready_handler(State(state): State<AppState>) -> Response {
 
 async fn metrics_handler(State(state): State<AppState>) -> Json<MetricsSnapshot> {
     Json(state.metrics.snapshot(state.start_time).await)
+}
+
+async fn logs_stats_handler(State(state): State<AppState>) -> Json<LogSummary> {
+    Json(state.log_buffer.get_summary().await)
+}
+
+async fn usage_handler(State(state): State<AppState>) -> Json<UsageStats> {
+    Json(state.usage_tracker.get_stats().await)
 }
 
 async fn sse_handler(

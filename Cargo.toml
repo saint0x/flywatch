@@ -31,8 +31,14 @@ async-stream = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.10", features = ["v4"] }
 
+# HTTP client for OpenRouter
+reqwest = { version = "0.12", features = ["json"] }
+
 # Metrics
 sysinfo = "0.32"
+
+# Persistence (SQLite-based storage)
+stoar = { path = "./stoar" }
 
 [profile.release]
 lto = true

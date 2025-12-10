@@ -1,0 +1,18 @@
+{
+  "name": "flywatch",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"bun run dev:backend\" \"cd frontend && bun run dev\"",
+    "dev:frontend": "cd frontend && bun run dev",
+    "dev:backend": "dotenv -- cargo run",
+    "build": "cargo build --release && cd frontend && bun run build",
+    "build:frontend": "cd frontend && bun run build",
+    "build:backend": "cargo build --release",
+    "typecheck": "cd frontend && bun run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "dotenv-cli": "^8.0.0"
+  }
+}

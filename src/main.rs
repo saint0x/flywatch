@@ -1,7 +1,12 @@
+mod chat;
 mod config;
 mod http;
+mod log_buffer;
 mod metrics;
 mod nats;
+mod pricing;
+mod prompt;
+mod usage;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,8 +16,10 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use crate::config::Config;
 use crate::http::{create_router, AppState};
+use crate::log_buffer::{LogBuffer, LogBufferConfig};
 use crate::metrics::{metrics_updater, Metrics};
 use crate::nats::{LogMessage, NatsSubscriber};
+use crate::usage::UsageTracker;
 
 const CHANNEL_CAPACITY: usize = 10_000;
 
@@ -41,6 +48,22 @@ async fn main() {
     // Initialize metrics
     let metrics = Metrics::new();
 
+    // Create log buffer for AI access
+    let log_buffer_config = LogBufferConfig {
+        max_entries: config.log_buffer_max_entries,
+        max_age_minutes: config.log_buffer_max_age_minutes,
+    };
+    let log_buffer = LogBuffer::new(log_buffer_config);
+
+    info!(
+        max_entries = config.log_buffer_max_entries,
+        max_age_minutes = config.log_buffer_max_age_minutes,
+        "Log buffer initialized"
+    );
+
+    // Create usage tracker for AI cost persistence
+    let usage_tracker = Arc::new(UsageTracker::new(config.store_path.as_deref()));
+
     // Create broadcast channel for log distribution
     let (log_tx, _) = broadcast::channel::<LogMessage>(CHANNEL_CAPACITY);
 
@@ -49,6 +72,8 @@ async fn main() {
         config: config.clone(),
         metrics: metrics.clone(),
         log_tx: log_tx.clone(),
+        log_buffer: log_buffer.clone(),
+        usage_tracker,
         start_time: Instant::now(),
     };
 
@@ -59,7 +84,7 @@ async fn main() {
     });
 
     // Spawn NATS subscriber
-    let subscriber = NatsSubscriber::new(config.clone(), metrics.clone(), log_tx);
+    let subscriber = NatsSubscriber::new(config.clone(), metrics.clone(), log_tx, log_buffer);
     tokio::spawn(async move {
         subscriber.run().await;
     });

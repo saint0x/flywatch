@@ -7,6 +7,7 @@ Real-time log streaming service for Fly.io applications. Exposes production logs
 - **Real-time log streaming** from Fly.io's internal NATS bus
 - **SSE and WebSocket** support for flexible client integration
 - **Health metrics** including CPU, memory, and connection counts
+- **AI-powered log analysis** via OpenRouter with tool-calling agent
 - **Production-ready** with automatic reconnection and backpressure handling
 
 ## Endpoints
@@ -20,6 +21,7 @@ Real-time log streaming service for Fly.io applications. Exposes production logs
 | `/logs/stream` | GET | SSE stream of raw log events |
 | `/logs/ws` | GET | WebSocket stream of raw log events |
 | `/metrics/ws` | GET | WebSocket stream of metrics (1/sec) |
+| `/chat` | POST | AI-powered log analysis (requires OpenRouter API key) |
 
 ## Deployment
 
@@ -61,6 +63,10 @@ Clients must then include `Authorization: Bearer your-secret-token` header.
 | `ORG_SLUG` | Yes | Fly organization slug |
 | `ACCESS_TOKEN` | Yes | Fly auth token for NATS access |
 | `AUTH_TOKEN` | No | Optional bearer token for API auth |
+| `OPENROUTER_API_KEY` | No | OpenRouter API key for AI chat |
+| `OPENROUTER_MODEL` | No | Model to use (default: `moonshotai/kimi-k2`) |
+| `LOG_BUFFER_MAX_ENTRIES` | No | Max logs in buffer (default: `10000`) |
+| `LOG_BUFFER_MAX_AGE_MINUTES` | No | Max log age in minutes (default: `30`) |
 | `RUST_LOG` | No | Log level (default: `info`) |
 | `PORT` | No | HTTP port (default: `8080`) |
 
@@ -89,6 +95,30 @@ websocat wss://flywatch.fly.dev/metrics/ws
 ```bash
 curl https://flywatch.fly.dev/health | jq .
 ```
+
+### AI Chat (Ask questions about your logs)
+
+```bash
+curl -X POST https://flywatch.fly.dev/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -d '{"message": "Are there any errors in the recent logs?"}'
+```
+
+Response:
+```json
+{
+  "response": "Based on my analysis of the recent logs...",
+  "model": "moonshotai/kimi-k2",
+  "tools_called": ["get_logs({\"count\":100})"],
+  "usage": {"prompt_tokens": 1234, "completion_tokens": 256, "total_tokens": 1490},
+  "processing_time_ms": 2345
+}
+```
+
+The AI agent has access to tools:
+- `get_logs` - Fetch logs by count or time range
+- `get_metrics` - Fetch system metrics (CPU, memory, connections)
 
 ## Response Formats
 

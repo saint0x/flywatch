@@ -1,0 +1,26 @@
+[package]
+name = "stoar"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "stoar"
+path = "lib.rs"
+
+[dependencies]
+# SQLite - bundled for portability
+rusqlite = { version = "0.31", features = ["bundled", "chrono"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"

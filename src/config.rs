@@ -9,6 +9,17 @@ pub struct Config {
     pub nats_password: String,
     pub host: String,
     pub port: u16,
+
+    // OpenRouter configuration
+    pub openrouter_api_key: Option<String>,
+    pub openrouter_model: String,
+
+    // Log buffer configuration
+    pub log_buffer_max_entries: usize,
+    pub log_buffer_max_age_minutes: i64,
+
+    // Persistence configuration
+    pub store_path: Option<String>,
 }
 
 impl Config {
@@ -34,6 +45,28 @@ impl Config {
             .parse()
             .expect("PORT must be a valid number");
 
+        // OpenRouter configuration
+        let openrouter_api_key = env::var("OPENROUTER_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let openrouter_model = env::var("OPENROUTER_MODEL")
+            .unwrap_or_else(|_| "moonshotai/kimi-k2".to_string());
+
+        // Log buffer configuration
+        let log_buffer_max_entries = env::var("LOG_BUFFER_MAX_ENTRIES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10_000);
+        let log_buffer_max_age_minutes = env::var("LOG_BUFFER_MAX_AGE_MINUTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(30);
+
+        // Persistence configuration
+        let store_path = env::var("STORE_PATH")
+            .ok()
+            .filter(|s| !s.is_empty());
+
         Self {
             fly_prod_app_name,
             auth_token,
@@ -42,6 +75,11 @@ impl Config {
             nats_password,
             host,
             port,
+            openrouter_api_key,
+            openrouter_model,
+            log_buffer_max_entries,
+            log_buffer_max_age_minutes,
+            store_path,
         }
     }
 
