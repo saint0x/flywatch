@@ -48,16 +48,17 @@ async fn main() {
     // Initialize metrics
     let metrics = Metrics::new();
 
-    // Create log buffer for AI access
+    // Create log buffer for AI access with persistence
     let log_buffer_config = LogBufferConfig {
         max_entries: config.log_buffer_max_entries,
         max_age_minutes: config.log_buffer_max_age_minutes,
     };
-    let log_buffer = LogBuffer::new(log_buffer_config);
+    let log_buffer = LogBuffer::new(log_buffer_config, config.store_path.as_deref());
 
     info!(
         max_entries = config.log_buffer_max_entries,
         max_age_minutes = config.log_buffer_max_age_minutes,
+        store_path = ?config.store_path,
         "Log buffer initialized"
     );
 

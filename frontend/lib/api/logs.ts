@@ -9,6 +9,37 @@ export async function getLogBufferStats(): Promise<LogBufferSummary> {
   return apiFetch<LogBufferSummary>("/logs/buffer/stats")
 }
 
+export interface HistoricalLog {
+  timestamp: string
+  raw: string
+  level: string | null
+  instance: string | null
+  region: string | null
+  message: string | null
+}
+
+export interface HistoryResponse {
+  logs: HistoricalLog[]
+  total_count: number
+  has_more: boolean
+}
+
+/**
+ * Fetch historical logs before a given timestamp
+ * @param before - RFC3339 timestamp, fetch logs before this time
+ * @param limit - Max number of logs to fetch (default 100, max 1000)
+ */
+export async function fetchHistoricalLogs(before?: string, limit = 100): Promise<HistoryResponse> {
+  const params = new URLSearchParams()
+  if (before) params.set("before", before)
+  params.set("limit", String(Math.min(limit, 1000)))
+
+  const queryString = params.toString()
+  const url = `/logs/history${queryString ? `?${queryString}` : ""}`
+
+  return apiFetch<HistoryResponse>(url)
+}
+
 // ============================================================================
 // WEBSOCKET STREAMING
 // ============================================================================
@@ -188,5 +219,33 @@ function parseFlyLog(data: unknown): FlyLog | null {
     },
     message: String(raw.message),
     timestamp: String(raw.timestamp),
+  }
+}
+
+/**
+ * Convert a HistoricalLog (from history API) to FlyLog format (for UI consistency)
+ */
+export function historicalLogToFlyLog(log: HistoricalLog): FlyLog | null {
+  try {
+    // Try to parse the raw JSON to get full metadata
+    const raw = JSON.parse(log.raw) as Record<string, unknown>
+    return parseFlyLog(raw)
+  } catch {
+    // Fallback: construct from individual fields
+    return {
+      event: { provider: "fly" },
+      fly: {
+        app: {
+          instance: log.instance || "unknown",
+          name: "unknown",
+        },
+        region: (log.region as FlyLog["fly"]["region"]) || "unknown",
+      },
+      log: {
+        level: (log.level as FlyLog["log"]["level"]) || "info",
+      },
+      message: log.message || "",
+      timestamp: log.timestamp,
+    }
   }
 }

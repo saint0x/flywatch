@@ -1,5 +1,6 @@
 import type { ProcessedLogWithMetadata, LogFilters, AvailableFilterOptions, LogCategory, ProcessedLog } from "@/lib/types/ui"
 import { ALL_CATEGORIES } from "./log-parser"
+import { formatTimestampWithMs } from "./format"
 
 // Default options to show in dropdowns before any logs arrive
 // Order: most important first
@@ -34,13 +35,26 @@ export function filterLogs(logs: ProcessedLogWithMetadata[], filters: LogFilters
       return false
     }
 
-    // Search query (case-insensitive substring match)
+    // Search query (case-insensitive substring match + time search)
     if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase()
-      const matchesMessage = log.message.toLowerCase().includes(query)
-      const matchesComponent = log.parsed.componentName.toLowerCase().includes(query)
-      if (!matchesMessage && !matchesComponent) {
-        return false
+      const query = filters.searchQuery.toLowerCase().trim()
+
+      // Check if query looks like a time pattern (HH:MM, HH:MM:SS, or HH:MM:SS.mmm)
+      const isTimeQuery = /^\d{1,2}:\d{2}(:\d{2})?(\.\d{1,3})?$/.test(query)
+
+      if (isTimeQuery) {
+        // Match against formatted timestamp
+        const formattedTime = formatTimestampWithMs(log.timestamp)
+        if (!formattedTime.includes(query)) {
+          return false
+        }
+      } else {
+        // Standard text search on message and component
+        const matchesMessage = log.message.toLowerCase().includes(query)
+        const matchesComponent = log.parsed.componentName.toLowerCase().includes(query)
+        if (!matchesMessage && !matchesComponent) {
+          return false
+        }
       }
     }
 

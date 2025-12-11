@@ -2,10 +2,14 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Arc;
+use stoar::Store;
 use tokio::sync::RwLock;
+use tracing::{error, info};
+
+const LOGS_COLLECTION: &str = "logs";
 
 /// A timestamped log entry with parsed metadata
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimestampedLog {
     pub timestamp: DateTime<Utc>,
     pub raw: String,
@@ -120,38 +124,104 @@ pub struct LogBufferStats {
     pub max_age_minutes: i64,
 }
 
-/// Thread-safe rolling log buffer
+/// Thread-safe rolling log buffer with optional persistence
 pub struct LogBuffer {
     config: LogBufferConfig,
     logs: RwLock<VecDeque<TimestampedLog>>,
+    store: Option<Store>,
 }
 
 impl LogBuffer {
-    pub fn new(config: LogBufferConfig) -> Arc<Self> {
+    pub fn new(config: LogBufferConfig, store_path: Option<&str>) -> Arc<Self> {
         let capacity = config.max_entries;
+
+        // Initialize store if path provided
+        let store = store_path.and_then(|path| {
+            match Store::open(path) {
+                Ok(s) => {
+                    info!(path = %path, "Log persistence enabled");
+                    Some(s)
+                }
+                Err(e) => {
+                    error!(error = %e, path = %path, "Failed to open log store, running without persistence");
+                    None
+                }
+            }
+        });
+
+        // Load existing logs from store
+        let mut initial_logs = VecDeque::with_capacity(capacity);
+        if let Some(ref s) = store {
+            match s.all::<TimestampedLog>(LOGS_COLLECTION) {
+                Ok(mut persisted) => {
+                    // Sort by timestamp
+                    persisted.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+                    // Only keep logs within max_age
+                    let cutoff = Utc::now() - Duration::minutes(config.max_age_minutes);
+                    for log in persisted {
+                        if log.timestamp >= cutoff {
+                            initial_logs.push_back(log);
+                        }
+                    }
+
+                    // Trim to max_entries
+                    while initial_logs.len() > config.max_entries {
+                        initial_logs.pop_front();
+                    }
+
+                    info!(count = initial_logs.len(), "Loaded persisted logs");
+                }
+                Err(e) => {
+                    error!(error = %e, "Failed to load persisted logs");
+                }
+            }
+        }
+
         Arc::new(Self {
             config,
-            logs: RwLock::new(VecDeque::with_capacity(capacity)),
+            logs: RwLock::new(initial_logs),
+            store,
         })
     }
 
     /// Push a new log entry, pruning old entries if necessary
     pub async fn push(&self, raw: String) {
         let entry = TimestampedLog::new(raw);
-        let mut logs = self.logs.write().await;
+        let log_id = entry.timestamp.timestamp_nanos_opt().unwrap_or(0).to_string();
 
+        // Persist to store
+        if let Some(ref store) = self.store {
+            if let Err(e) = store.put(LOGS_COLLECTION, &log_id, &entry) {
+                error!(error = %e, "Failed to persist log entry");
+            }
+        }
+
+        let mut logs = self.logs.write().await;
         logs.push_back(entry);
 
         // Prune by count
         while logs.len() > self.config.max_entries {
-            logs.pop_front();
+            if let Some(old) = logs.pop_front() {
+                // Remove from store
+                if let Some(ref store) = self.store {
+                    let old_id = old.timestamp.timestamp_nanos_opt().unwrap_or(0).to_string();
+                    let _ = store.delete(LOGS_COLLECTION, &old_id);
+                }
+            }
         }
 
         // Prune by age
         let cutoff = Utc::now() - Duration::minutes(self.config.max_age_minutes);
         while let Some(front) = logs.front() {
             if front.timestamp < cutoff {
-                logs.pop_front();
+                if let Some(old) = logs.pop_front() {
+                    // Remove from store
+                    if let Some(ref store) = self.store {
+                        let old_id = old.timestamp.timestamp_nanos_opt().unwrap_or(0).to_string();
+                        let _ = store.delete(LOGS_COLLECTION, &old_id);
+                    }
+                }
             } else {
                 break;
             }
@@ -192,6 +262,36 @@ impl LogBuffer {
             .filter(|log| log.timestamp >= start && log.timestamp <= end)
             .cloned()
             .collect()
+    }
+
+    /// Get logs before a specific timestamp (for pagination)
+    /// Returns logs in chronological order (oldest first within the batch)
+    pub async fn get_before(&self, before: DateTime<Utc>, limit: usize) -> Vec<TimestampedLog> {
+        let logs = self.logs.read().await;
+
+        // Find logs older than 'before' timestamp
+        let mut result: Vec<TimestampedLog> = logs
+            .iter()
+            .filter(|log| log.timestamp < before)
+            .cloned()
+            .collect();
+
+        // Sort by timestamp descending to get most recent first
+        result.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        // Take the limit (most recent N logs before the cutoff)
+        result.truncate(limit);
+
+        // Reverse to return in chronological order
+        result.reverse();
+
+        result
+    }
+
+    /// Get total count of logs in buffer
+    pub async fn total_count(&self) -> usize {
+        let logs = self.logs.read().await;
+        logs.len()
     }
 
     /// Get a summary of the buffer for initial AI context

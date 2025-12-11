@@ -1,10 +1,11 @@
 import { useRef, useLayoutEffect, type UIEvent } from "react"
-import { Terminal } from "lucide-react"
+import { Terminal, ChevronUp, Loader2 } from "lucide-react"
 import { useLogs } from "@/hooks/use-logs"
 import type { ProcessedLogWithMetadata } from "@/lib/types/ui"
 import { formatTimestampWithMs } from "@/lib/utils/format"
 import { getCategoryEmoji, shortenComponentName, getComponentTypeColor } from "@/lib/utils/log-parser"
 import { LogFilterBar } from "./log-filter-bar"
+import { Button } from "@/components/ui/button"
 
 interface LogStreamProps {
   hasActiveChat: boolean
@@ -21,6 +22,10 @@ export function LogStream({ hasActiveChat }: LogStreamProps) {
     clearFilters,
     hasActiveFilters,
     availableOptions,
+    loadMore,
+    isLoadingMore,
+    hasMore,
+    totalCount,
   } = useLogs(1000)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -99,6 +104,31 @@ export function LogStream({ hasActiveChat }: LogStreamProps) {
           className="h-[500px] overflow-y-auto font-mono text-xs bg-white p-6 rounded-b-2xl"
           style={{ fontFamily: "var(--font-mono)" }}
         >
+          {/* Load More Button */}
+          {hasMore && allLogs.length > 0 && (
+            <div className="flex justify-center mb-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => loadMore(100)}
+                disabled={isLoadingMore}
+                className="h-7 gap-1.5 text-xs text-slate-10 hover:text-slate-12"
+              >
+                {isLoadingMore ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <ChevronUp className="w-3 h-3" />
+                    Load older logs {totalCount > 0 && `(${totalCount} total)`}
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
           {logs.length === 0 ? (
             <div className="flex items-center justify-center h-full text-slate-10 text-sm">
               {allLogs.length === 0 ? "Waiting for logs..." : "No logs match your filters"}

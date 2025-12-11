@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import type { FlyLog } from "@/lib/types/api"
 import type { ProcessedLog, ProcessedLogWithMetadata, LogFilters } from "@/lib/types/ui"
-import { connectToLogStream, type LogStreamConnection } from "@/lib/api/logs"
+import { connectToLogStream, fetchHistoricalLogs, historicalLogToFlyLog, type LogStreamConnection } from "@/lib/api/logs"
 import { parseLogMessage } from "@/lib/utils/log-parser"
 import {
   filterLogs,
@@ -44,6 +44,9 @@ export function useLogs(maxLogs = 1000) {
   const [filters, setFilters] = useState<LogFilters>(createEmptyFilters)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const [totalCount, setTotalCount] = useState(0)
   const shouldAutoScroll = useRef(true)
   const connectionRef = useRef<LogStreamConnection | null>(null)
 
@@ -80,6 +83,50 @@ export function useLogs(maxLogs = 1000) {
     }
   }, [addLog])
 
+  // Load more historical logs (older than current oldest)
+  const loadMore = useCallback(async (limit = 100) => {
+    if (isLoadingMore) return
+
+    setIsLoadingMore(true)
+    setError(null)
+
+    try {
+      // Get the oldest log timestamp we currently have
+      const oldestLog = logs[0]
+      const before = oldestLog?.timestamp
+
+      console.log("[loadMore] Fetching logs before:", before, "limit:", limit)
+
+      const response = await fetchHistoricalLogs(before, limit)
+
+      console.log("[loadMore] Response:", response.logs.length, "logs, hasMore:", response.has_more, "total:", response.total_count)
+
+      // Convert historical logs to FlyLog format and transform
+      const historicalLogs: ProcessedLogWithMetadata[] = []
+      for (const histLog of response.logs) {
+        const flyLog = historicalLogToFlyLog(histLog)
+        if (flyLog) {
+          historicalLogs.push(transformLog(flyLog))
+        }
+      }
+
+      console.log("[loadMore] Converted", historicalLogs.length, "logs")
+
+      // Prepend historical logs (they're older)
+      if (historicalLogs.length > 0) {
+        setLogs((prev) => [...historicalLogs, ...prev])
+      }
+
+      setHasMore(response.has_more)
+      setTotalCount(response.total_count)
+    } catch (err) {
+      console.error("[loadMore] Error:", err)
+      setError(err instanceof Error ? err.message : "Failed to load more logs")
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [isLoadingMore, logs])
+
   // Memoized filtered logs
   const filteredLogs = useMemo(() => filterLogs(logs, filters), [logs, filters])
 
@@ -88,6 +135,7 @@ export function useLogs(maxLogs = 1000) {
 
   const clearLogs = useCallback(() => {
     setLogs([])
+    setHasMore(true)
   }, [])
 
   const clearFilters = useCallback(() => {
@@ -112,5 +160,10 @@ export function useLogs(maxLogs = 1000) {
     clearFilters,
     hasActiveFilters: checkHasActiveFilters(filters),
     availableOptions,
+    // Pagination
+    loadMore,
+    isLoadingMore,
+    hasMore,
+    totalCount,
   }
 }

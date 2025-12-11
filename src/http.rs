@@ -1,7 +1,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{
@@ -11,8 +11,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,7 +24,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::chat::chat_handler;
 use crate::config::Config;
-use crate::log_buffer::{LogBuffer, LogSummary};
+use crate::log_buffer::{LogBuffer, LogSummary, TimestampedLog};
 use crate::metrics::{HealthStatus, Metrics, MetricsSnapshot};
 use crate::nats::LogMessage;
 use crate::usage::{UsageStats, UsageTracker};
@@ -55,6 +56,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metrics", get(metrics_handler))
         .route("/logs/stream", get(sse_handler))
         .route("/logs/ws", get(ws_handler))
+        .route("/logs/history", get(logs_history_handler))
         .route("/metrics/ws", get(metrics_ws_handler))
         .route("/chat", post(chat_handler))
         .route("/logs/buffer/stats", get(logs_stats_handler))
@@ -111,6 +113,57 @@ async fn logs_stats_handler(State(state): State<AppState>) -> Json<LogSummary> {
 
 async fn usage_handler(State(state): State<AppState>) -> Json<UsageStats> {
     Json(state.usage_tracker.get_stats().await)
+}
+
+#[derive(Deserialize)]
+struct HistoryQuery {
+    before: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct HistoryResponse {
+    logs: Vec<TimestampedLog>,
+    total_count: usize,
+    has_more: bool,
+}
+
+async fn logs_history_handler(
+    State(state): State<AppState>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<HistoryResponse>, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(100).min(1000); // Default 100, max 1000
+
+    let before = match query.before {
+        Some(ts) => {
+            DateTime::parse_from_rfc3339(&ts)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid 'before' timestamp: {}. Use RFC3339 format.", e),
+                    )
+                })?
+        }
+        None => Utc::now(),
+    };
+
+    let logs = state.log_buffer.get_before(before, limit).await;
+    let total_count = state.log_buffer.total_count().await;
+
+    // Check if there are more logs before the oldest returned log
+    let has_more = if let Some(oldest) = logs.first() {
+        let older_logs = state.log_buffer.get_before(oldest.timestamp, 1).await;
+        !older_logs.is_empty()
+    } else {
+        false
+    };
+
+    Ok(Json(HistoryResponse {
+        logs,
+        total_count,
+        has_more,
+    }))
 }
 
 async fn sse_handler(
