@@ -1,20 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from "react"
-import type { MetricsSnapshot } from "@/lib/types/api"
+import { useState, useEffect, useCallback } from "react"
 import type { SystemMetric } from "@/lib/types/ui"
-import { connectToMetricsStream, type MetricsStreamConnection } from "@/lib/api/metrics"
+import type { MetricsResponse } from "@/lib/types/stats"
+import { getSystemMetrics } from "@/lib/api/stats"
 
-function transformMetricsToUI(metrics: MetricsSnapshot): SystemMetric[] {
-  const cpuPercent = metrics.system?.cpu_usage_percent ?? 0
-  const memoryPercent = metrics.system?.memory_usage_percent ?? 0
+const POLL_INTERVAL = 10000 // 10 seconds
 
-  // Calculate network I/O as a derivative of messages forwarded
-  const networkIO = Math.min(99, (metrics.messages_forwarded % 1000) / 10 + 10)
-
-  // Requests per minute estimation based on connection count and messages
-  const requestsPerMin = Math.floor(
-    (metrics.active_sse_connections + metrics.active_ws_connections) * 60 +
-      (metrics.messages_forwarded % 500)
-  )
+function transformMetricsToUI(data: MetricsResponse): SystemMetric[] {
+  const cpuPercent = data.system?.cpu_usage_percent ?? 0
+  const memoryPercent = data.system?.memory_usage_percent ?? 0
+  const activeConnections = data.summary?.active_connections ?? 0
+  const rps = data.summary?.requests_per_second ?? 0
 
   return [
     {
@@ -36,10 +31,10 @@ function transformMetricsToUI(metrics: MetricsSnapshot): SystemMetric[] {
       trend: memoryPercent > 75 ? "up" : "stable",
     },
     {
-      id: "network",
-      label: "Network I/O",
-      value: networkIO,
-      unit: "MB/s",
+      id: "connections",
+      label: "Active Connections",
+      value: activeConnections,
+      unit: "",
       icon: "network",
       color: "text-purple-400",
       trend: "stable",
@@ -47,8 +42,8 @@ function transformMetricsToUI(metrics: MetricsSnapshot): SystemMetric[] {
     {
       id: "requests",
       label: "Requests",
-      value: requestsPerMin,
-      unit: "/min",
+      value: rps,
+      unit: "/s",
       icon: "activity",
       color: "text-orange-400",
       trend: "stable",
@@ -58,46 +53,35 @@ function transformMetricsToUI(metrics: MetricsSnapshot): SystemMetric[] {
 
 export function useMetrics() {
   const [metrics, setMetrics] = useState<SystemMetric[]>([])
-  const [rawMetrics, setRawMetrics] = useState<MetricsSnapshot | null>(null)
+  const [rawMetrics, setRawMetrics] = useState<MetricsResponse | null>(null)
   const [isConnected, setIsConnected] = useState(false)
-  const [isHealthy, setIsHealthy] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const connectionRef = useRef<MetricsStreamConnection | null>(null)
 
-  const handleMetrics = useCallback((snapshot: MetricsSnapshot) => {
-    setRawMetrics(snapshot)
-    setMetrics(transformMetricsToUI(snapshot))
-    setIsHealthy(snapshot.nats_connected)
+  const fetchMetrics = useCallback(async () => {
+    try {
+      const data = await getSystemMetrics()
+      setRawMetrics(data)
+      setMetrics(transformMetricsToUI(data))
+      setIsConnected(true)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch metrics")
+      setIsConnected(false)
+    }
   }, [])
 
   useEffect(() => {
-    // Connect to WebSocket metrics stream
-    connectionRef.current = connectToMetricsStream({
-      onMetrics: handleMetrics,
-      onOpen: () => {
-        setIsConnected(true)
-        setError(null)
-      },
-      onClose: () => {
-        setIsConnected(false)
-      },
-      onError: (err) => {
-        setIsConnected(false)
-        setError(typeof err === "string" ? err : "Connection error")
-      },
-    })
+    fetchMetrics()
 
-    return () => {
-      connectionRef.current?.close()
-      connectionRef.current = null
-    }
-  }, [handleMetrics])
+    const interval = setInterval(fetchMetrics, POLL_INTERVAL)
+    return () => clearInterval(interval)
+  }, [fetchMetrics])
 
   return {
     metrics,
     rawMetrics,
     isConnected,
-    isHealthy,
+    isHealthy: isConnected,
     error,
   }
 }

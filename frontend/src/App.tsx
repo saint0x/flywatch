@@ -3,6 +3,9 @@ import { LogStream } from "@/components/log-stream"
 import { SystemMetrics } from "@/components/system-metrics"
 import { FloatingChatBar } from "@/components/floating-chat-bar"
 import { ChatResponse } from "@/components/chat-response"
+import { StatsGrid } from "@/components/stats-grid"
+import { DatabasePlaceholder } from "@/components/database-placeholder"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { useChat } from "@/hooks/use-chat"
 import type { ChatResponse as ChatResponseType } from "@/lib/types/api"
 
@@ -51,11 +54,32 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-1 flex flex-col font-sans antialiased">
-      <SystemMetrics />
+      <Tabs defaultValue="logs" className="flex-1 flex flex-col">
+        <div className="px-4 pt-8 pb-4">
+          <div className="max-w-6xl mx-auto">
+            <TabsList>
+              <TabsTrigger value="logs">Logs</TabsTrigger>
+              <TabsTrigger value="stats">Stats</TabsTrigger>
+              <TabsTrigger value="database">Database</TabsTrigger>
+            </TabsList>
+          </div>
+        </div>
 
-      <div className={`flex-1 px-4 transition-all duration-300 ${activeResponse ? "pb-32" : "pb-24"}`}>
-        <LogStream hasActiveChat={!!activeResponse} />
-      </div>
+        <TabsContent value="logs" className="flex-1 flex flex-col">
+          <SystemMetrics />
+          <div className={`flex-1 px-4 transition-all duration-300 ${activeResponse ? "pb-32" : "pb-24"}`}>
+            <LogStream hasActiveChat={!!activeResponse} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="stats" className="flex-1 px-4 pt-4 pb-24">
+          <StatsGrid />
+        </TabsContent>
+
+        <TabsContent value="database" className="flex-1 px-4 pt-4 pb-24">
+          <DatabasePlaceholder />
+        </TabsContent>
+      </Tabs>
 
       {activeResponse && (
         <ChatResponse response={activeResponse} visible={responseVisible} onHover={handleResponseHover} />
